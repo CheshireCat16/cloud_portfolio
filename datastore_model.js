@@ -1,6 +1,7 @@
 // John Cheshire
-// CS493 - Assignment 4
-// Data model for accessing boats API through Google Datastore
+// CS493 - Portfolio Assigment
+// Example REST API for a shipping company where users own boats that can carry loads
+// Data model for accessing boats, users, and loads API through Google Datastore
 // Code adapted from examples at https://github.com/GoogleCloudPlatform/nodejs-getting-started/blob/8bb3d70596cb0c1851cd587d393faa76bfad8f80/2-structured-data/books/model-datastore.js
 // Retrieved April 13, 2022
 

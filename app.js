@@ -1,6 +1,6 @@
 // John Cheshire
-// CS493 - Assignment 4
-// Application to handle API requests for Boats and Loads
+// CS493 - Portfolio Assigment
+// Example REST API for a shipping company where users own boats that can carry loads
 // Code initially adapted from examples at https://github.com/GoogleCloudPlatform/nodejs-getting-started/blob/8bb3d70596cb0c1851cd587d393faa76bfad8f80/2-structured-data/books/api.js
 // Retrieved April 13, 2022
 
