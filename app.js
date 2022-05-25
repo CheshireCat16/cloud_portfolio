@@ -12,9 +12,26 @@ const express = require('express');
 const app = express();
 const bodyParser = require('body-parser');
 app.enable('trust proxy');
+const { default: axios } = require('axios');
+
 // Used to promisify callback function 
 // Example from: https://www.freecodecamp.org/news/how-to-make-a-promise-out-of-a-callback-function-in-javascript-d8ec35d1f981/
 const util = require('util'); 
+
+// Enable google people API
+const {google} = require('googleapis');
+const url = require('url');
+
+// Set up and use crypto for random number generation
+// Based on code snippet from https://stackoverflow.com/questions/1349404/generate-random-string-characters-in-javascript
+// Retrieved May 5, 2022
+var crypto = require("crypto");
+
+// Set up handlebars for handling the login / sign up pages
+const { engine } = require('express-handlebars');
+app.engine('hbs', engine({extname: "hbs"}));
+app.set('view engine', 'hbs');
+app.use(express.static('public'));
 
 // Constants for the two kinds of entities we handle
 const boats = "Boats";
@@ -28,6 +45,9 @@ app.use(express.json());
 // Set up the correct model
 const config = require("./config/config.js");
 const model = require(`./${config.backend}_model.js`);
+
+// Set up API keys for Google People API
+const people = require("./config/api_keys.js");
 
 
 /////////////////////////////////////////////////////////////////////////
@@ -46,11 +66,11 @@ const verifyJwt = (req, res, next) => {
         // Pull the token out of the authorization header
         const token = authHeader.split(' ')[1];
         // Verify the JWT is valid and set sub if valid
-        const client = new google.auth.OAuth2(clientId);
+        const client = new google.auth.OAuth2(people.clientId);
         async function verify() {
           const ticket = await client.verifyIdToken({
               idToken: token,
-              audience: clientId,
+              audience: people.clientId,
           });
           const payload = ticket.getPayload();
           req.user = payload['sub'];
@@ -92,6 +112,140 @@ app.get('/users', (req, res) => {
     }
 });
 
+// Render the login / sign up page
+app.get('/', (req, res) => {
+    res.render('index', {"title": "CS493 - Shipping Project - Sign Up or Log In"});
+});
+
+// Set up the redirect to google's server to get an authorization for login
+app.get("/get_auth_login", (req, res) => {
+    getAuth(req, res, true);
+});
+
+// Set up the redirect to google's server to get an authorization for sign up
+app.get("/get_auth_signup", (req, res) => {
+    getAuth(req, res, false);
+});
+
+// Handle the response from the google server for a login request
+app.get("/login", (req, res) => {
+    // Check if there was an error returned
+    if (req.query.error) {
+        res.status(401)
+        res.json({"Error": "Not authorized"});
+    }
+    // Confirm that the access code was provided
+    else if (req.query.code && req.url.startsWith('/login')) {
+        // get the query
+        let q = url.parse(req.url, true).query;
+        console.log(q);
+
+        axios.post("https://oauth2.googleapis.com/token", {
+            code: q.code,
+            client_id: people.clientId,
+            client_secret: people.secret,
+            redirectUri: req.protocol + "://" + req.get("host") + people.redirectUriLogIn,
+            grant_type: "authorization_code"
+        }).then(function(response) {
+            // Register the user in the database
+            // Get the user's ID (sub)
+            const client = new google.auth.OAuth2(people.clientId);
+            async function verify() {
+                const ticket = await client.verifyIdToken({
+                    idToken: response.data.id_token,
+                    audience: people.clientId,
+                });
+                const payload = ticket.getPayload();
+                return payload['sub'];
+            }
+            verify().then(function(user_id) {
+                // Verify the user is registered
+                const filter = {
+                    "filterCol": "user_id",
+                    "filterVar": user_id,
+                    "operator": "="
+                };
+                model.listEntities(users, filter, null, (err, foundUsers) => {
+                    if (err) {
+                        res.status(500);
+                        res.json({"Error": "An unexpected error has occurred"});
+                    } else if (foundUsers.length > 0) {
+                        res.render("login", {"title": "Shipping Login Page", "login_status": "Please sign up before logging in!", "jwt_info": "User not registered, no JWT available."});
+                    } else {
+                        res.render("login", {"title": "Shipping Login Page", "login_status": "You've successfully logged in!", "jwt_info": response.data.id_token});
+                    }
+                });            
+            console.log(response);
+            
+            }).catch(function (error) {
+                console.log("Error getting token.")
+                console.log(error);
+                console.log("Error getting token.")
+                res.status(500);
+                res.json({"Error": "An unexpected error has occurred"});
+            });
+        });
+    } else {
+        res.status(500);
+        res.json({"Error": "An unknown error has occured"});
+    }
+});
+
+// Handle the response from the google server for a login request
+app.get("/signup", (req, res) => {
+    // Check if there was an error returned
+    if (req.query.error) {
+        res.status(401)
+        res.json({"Error": "Not authorized"});
+    }
+    // Confirm that the access code was provided
+    else if (req.query.code && req.url.startsWith('/signup')) {
+        // get the query
+        let q = url.parse(req.url, true).query;
+        console.log(q);
+
+        axios.post("https://oauth2.googleapis.com/token", {
+            code: q.code,
+            client_id: people.clientId,
+            client_secret: people.secret,
+            redirectUri: req.protocol + "://" + req.get("host") + people.redirectUriSignUp,
+            grant_type: "authorization_code"
+        }).then(function(response) {
+            // Register the user in the database
+            // Get the user's ID (sub)
+            const client = new google.auth.OAuth2(people.clientId);
+            async function verify() {
+                const ticket = await client.verifyIdToken({
+                    idToken: response.data.id_token,
+                    audience: people.clientId,
+                });
+                const payload = ticket.getPayload();
+                return payload['sub'];
+            }
+            verify().then(function(user_id) {
+                model.createEntity({"user_id": user_id}, users, (err, newuser) => {
+                    if (err) {
+                        res.status(500);
+                        res.json({"Error": "An unexpected error has occurred"});
+                    } else {
+                        res.render("signup", {"title": "Shipping Signup Page", "signup_status": "You've successfully signed up!", "jwt_info": response.data.id_token});
+                    }
+                });
+            });
+
+            
+        }).catch(function (error) {
+            console.log("Error getting token.")
+            console.log(error);
+            console.log("Error getting token.")
+            res.status(500);
+            res.json({"Error": "An unexpected error has occurred"});
+        });
+    } else {
+        res.status(500);
+        res.json({"Error": "An unknown error has occured"});
+    }
+});
 
 
 /////////////////////////////////////////////////////////////////////////
@@ -687,4 +841,61 @@ async function addAllCarriers(req, res, loadList, callback) {
 function notAcceptable(res) {
     res.status(406);
     res.json({"Error": "The requested MIME type in the Accept header is not supported"});
+}
+
+// Send request to google to authenticate user - either for sign up or login
+function getAuth(req, res, isLogin) {
+    //Save state
+    const state = {"state": crypto.randomBytes(15).toString("hex")};
+    if (isLogin) {
+        // Redirect the user with 301
+        // Set up client information
+        const oauth2clt = new google.auth.OAuth2(
+            people.clientId,
+            people.secret,
+            req.protocol + "://" + req.get("host") + people.redirectUriLogIn
+        );
+
+        const scopes = [
+            "https://www.googleapis.com/auth/userinfo.profile"
+        ];
+
+        // Generate URL to ask permission
+        const authorizationUrl = oauth2clt.generateAuthUrl({
+            access_type: "offline",
+            scope: scopes,
+            state: state.state
+        });
+        console.log("Logging URL");
+        console.log(oauth2clt);
+
+        res.writeHead(301, {"Location": authorizationUrl});
+        res.send();
+
+    } else {
+        // Redirect the user with 301
+        // Set up client information
+        const oauth2clt = new google.auth.OAuth2(
+            people.clientId,
+            people.secret,
+            req.protocol + "://" + req.get("host") + people.redirectUriSignUp
+        );
+
+        const scopes = [
+            "https://www.googleapis.com/auth/userinfo.profile"
+        ];
+
+        // Generate URL to ask permission
+        const authorizationUrl = oauth2clt.generateAuthUrl({
+            access_type: "offline",
+            scope: scopes,
+            state: state.state
+        });
+        console.log("Logging URL");
+        console.log(oauth2clt);
+
+        res.writeHead(301, {"Location": authorizationUrl});
+        res.send();
+    }
+
 }
