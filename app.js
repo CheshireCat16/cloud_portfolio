@@ -19,6 +19,7 @@ const util = require('util');
 // Constants for the two kinds of entities we handle
 const boats = "Boats";
 const loads = "Loads";
+const users = "Users";
 
 // Set up express to use body parser and handle json
 app.use(bodyParser.urlencoded({extended: true}));
@@ -27,6 +28,71 @@ app.use(express.json());
 // Set up the correct model
 const config = require("./config/config.js");
 const model = require(`./${config.backend}_model.js`);
+
+
+/////////////////////////////////////////////////////////////////////////
+// Middleware Section
+/////////////////////////////////////////////////////////////////////////
+
+// Create middleware to verify if token is acceptable
+// Based on code snippet https://stackabuse.com/authentication-and-authorization-with-jwts-in-express-js/
+// Author: Janith Kasun
+// Retrieved May 15, 2022
+const verifyJwt = (req, res, next) => {
+    // Get the authorization header
+    const authHeader = req.headers.authorization;
+    // check that we have an authorization header
+    if (authHeader) {
+        // Pull the token out of the authorization header
+        const token = authHeader.split(' ')[1];
+        // Verify the JWT is valid and set sub if valid
+        const client = new google.auth.OAuth2(clientId);
+        async function verify() {
+          const ticket = await client.verifyIdToken({
+              idToken: token,
+              audience: clientId,
+          });
+          const payload = ticket.getPayload();
+          req.user = payload['sub'];
+          console.log("Authorization Checked: ")
+          console.log(req.user);
+          next();
+        }
+        // If we had any kind of error, assume that we cannot verify the token, so don't set user name
+        verify().catch(() => {
+            next();
+        });
+    } else {
+        console.log("After check")
+        console.log(req.user);
+        next();
+    } 
+}
+
+
+/////////////////////////////////////////////////////////////////////////
+// User Section
+/////////////////////////////////////////////////////////////////////////
+
+// GET all registered users
+app.get('/users', (req, res) => {
+    if (req.header("Accept") == "application/json" || req.header("Accept") == "*/*") {
+        model.listEntities(users, null, null, (err, entities, hasNext) => {
+            if (err) {
+                res.status(500);
+                res.json({"Error": "Server error getting boats"});
+            } else {
+                res.status(200);
+                res.json(entities);
+            }   
+        });       
+    }
+    else {
+        notAcceptable(res);
+    }
+});
+
+
 
 /////////////////////////////////////////////////////////////////////////
 // Boat API Section
@@ -615,4 +681,10 @@ async function addAllCarriers(req, res, loadList, callback) {
         }
     }
     callback();
+}
+
+// Send a 406 not acceptable response
+function notAcceptable(res) {
+    res.status(406);
+    res.json({"Error": "The requested MIME type in the Accept header is not supported"});
 }

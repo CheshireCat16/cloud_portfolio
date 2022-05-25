@@ -16,6 +16,7 @@ const config = require("./config/config.js");
 // Constants for the two kinds of entities we handle
 const boats = "Boats";
 const loads = "Loads";
+const users = "Users";
 
 
 // Start datastore with configured project name, configured for either local or google cloud if env port is set
