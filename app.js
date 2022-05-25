@@ -170,21 +170,19 @@ app.get("/login", (req, res) => {
                         res.status(500);
                         res.json({"Error": "An unexpected error has occurred"});
                     } else if (foundUsers.length > 0) {
-                        res.render("login", {"title": "Shipping Login Page", "login_status": "Please sign up before logging in!", "jwt_info": "User not registered, no JWT available."});
+                        res.render("login", {"title": "Shipping Login Page", "login_status": "Please sign up before logging in!", "jwt_info": "User not registered, no JWT available.", "user_id": "N/A"});
                     } else {
-                        res.render("login", {"title": "Shipping Login Page", "login_status": "You've successfully logged in!", "jwt_info": response.data.id_token});
+                        res.render("login", {"title": "Shipping Login Page", "login_status": "You've successfully logged in!", "jwt_info": response.data.id_token, "user_id": user_id});
                     }
                 });            
-            console.log(response);
-            
-            }).catch(function (error) {
-                console.log("Error getting token.")
-                console.log(error);
-                console.log("Error getting token.")
-                res.status(500);
-                res.json({"Error": "An unexpected error has occurred"});
             });
-        });
+        }).catch(function (error) {
+            console.log("Error getting token.")
+            console.log(error);
+            console.log("Error getting token.")
+            res.status(500);
+            res.json({"Error": "An unexpected error has occurred"});
+        });;
     } else {
         res.status(500);
         res.json({"Error": "An unknown error has occured"});
@@ -228,7 +226,7 @@ app.get("/signup", (req, res) => {
                         res.status(500);
                         res.json({"Error": "An unexpected error has occurred"});
                     } else {
-                        res.render("signup", {"title": "Shipping Signup Page", "signup_status": "You've successfully signed up!", "jwt_info": response.data.id_token});
+                        res.render("signup", {"title": "Shipping Signup Page", "signup_status": "You've successfully signed up!", "jwt_info": response.data.id_token, "user_id": user_id});
                     }
                 });
             });
