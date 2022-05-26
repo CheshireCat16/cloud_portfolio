@@ -74,8 +74,6 @@ const verifyJwt = (req, res, next) => {
           });
           const payload = ticket.getPayload();
           req.user = payload['sub'];
-          console.log("Authorization Checked: ")
-          console.log(req.user);
           next();
         }
         // If we had any kind of error, assume that we cannot verify the token, so don't set user name
@@ -83,8 +81,6 @@ const verifyJwt = (req, res, next) => {
             next();
         });
     } else {
-        console.log("After check")
-        console.log(req.user);
         next();
     } 
 }
@@ -138,7 +134,6 @@ app.get("/login", (req, res) => {
     else if (req.query.code && req.url.startsWith('/login')) {
         // get the query
         let q = url.parse(req.url, true).query;
-        console.log(q);
 
         axios.post("https://oauth2.googleapis.com/token", {
             code: q.code,
@@ -170,9 +165,9 @@ app.get("/login", (req, res) => {
                         res.status(500);
                         res.json({"Error": "An unexpected error has occurred"});
                     } else if (foundUsers.length > 0) {
-                        res.render("login", {"title": "Shipping Login Page", "login_status": "Please sign up before logging in!", "jwt_info": "User not registered, no JWT available.", "user_id": "N/A"});
-                    } else {
                         res.render("login", {"title": "Shipping Login Page", "login_status": "You've successfully logged in!", "jwt_info": response.data.id_token, "user_id": user_id});
+                    } else {
+                        res.render("login", {"title": "Shipping Login Page", "login_status": "Please sign up before logging in!", "jwt_info": "User not registered, no JWT available.", "user_id": "N/A"});
                     }
                 });            
             });
@@ -200,7 +195,6 @@ app.get("/signup", (req, res) => {
     else if (req.query.code && req.url.startsWith('/signup')) {
         // get the query
         let q = url.parse(req.url, true).query;
-        console.log(q);
 
         axios.post("https://oauth2.googleapis.com/token", {
             code: q.code,
@@ -252,91 +246,190 @@ app.get("/signup", (req, res) => {
 
 // GET all boats
 // Display a list of all boats
-app.get('/boats', (req, res) => {
-    //////// Add pagination
-    var pages = {"limit": 3};
-    pages["token"] = req.query["token"];
-    
-    model.listEntities(boats, null, pages, (err, entities, hasNext) => {
-        if (err) {
-            res.status(500);
-            res.json({"Error": "Server error getting boats"});
+// Only boats belonging to the current user will be displayed
+app.get('/boats', verifyJwt, (req, res) => {
+    // Confirm a json response is acceptable
+    if (req.header("Accept") == "application/json" || req.header("Accept") == "*/*") {
+        // Confirm there is a user id
+        if (req.user) {
+            // Confirm the user is registered
+            // Set up filter to get only authenticated user
+            const filter = {
+                "filterCol": "user_id",
+                "filterVar": req.user,
+                "operator": "="
+            };
+            model.listEntities(users, filter, null, (err, foundUsers) => {
+                if (err) {
+                    res.status(500);
+                    res.json({"Error": "Server error has occured getting boats."});
+                } else if (foundUsers.length > 0) {
+                    //////// Add pagination
+                    var pages = {"limit": 5};
+                    pages["token"] = req.query["token"];
+                    const filter2 = {
+                        "filterCol": "owner",
+                        "filterVar": req.user,
+                        "operator": "="
+                    };
+                    model.listEntities(boats, filter2, pages, (err, entities, hasNext) => {
+                        if (err) {
+                            res.status(500);
+                            res.json({"Error": "Server error getting boats"});
+                        }
+                        // Get Count of all valid boats
+                        model.listEntities(boats, filter2, null, (err, allEntities, hasNextUnused) => {                          
+                            // Set up results variables and count
+                            var results = {"boats": []};
+                            results["total"] = allEntities.length;
+
+
+                            // Update entities to include loads
+                            addAllLoads(req, res, entities, () => {
+                                results["boats"] = entities;
+                                // Set up next link                          
+                                if (hasNext) {
+                                    results["next"] = getPage(req, hasNext, "/boats");
+                                }
+                                res.status(200);
+                                res.json(results);
+                            });
+                        });
+
+
+                    });   
+                } else {
+                    notAuthorized(res);
+                }
+            });
+         
+        } else {
+            notAuthorized(res);       
         }
-        // Set up results variables
-        var results = {"boats": []};
-
-        // Update entities to include loads
-        addAllLoads(req, res, entities, () => {
-            results["boats"] = entities;
-            // Set up next link
-            console.log(hasNext);
-            
-            if (hasNext) {
-                results["next"] = getPage(req, hasNext, "/boats");
-            }
-            res.status(200);
-            res.json(results);
-        });
-
-    });
+    } else {
+        notAcceptable(res);
+    }
 });
 
 // GET specific boat
 // Get information about a specific boat
-app.get('/boats/:id', (req, res) => {
-    model.getEntity(boats, req.params.id, (err, entity) => {
-        // Check for errors
-        if (err) {
-            res.status(404);
-            res.json({"Error": "No boat with this boat_id exists"});
-        } else {
-            res.status(200);
-            // set up filter
-            filter = {
-                "filterCol": "carrier",
-                "filterVar": req.params.id,
+app.get('/boats/:id', verifyJwt, (req, res) => {
+    // Confirm application json is acceptable
+    if (req.header("Accept") == "application/json" || req.header("Accept") == "*/*") {
+        // Confirm there is a user id
+        if (req.user) {
+            // Confirm the user is registered
+            // Set up filter to get only authenticated user
+            const filter = {
+                "filterCol": "user_id",
+                "filterVar": req.user,
                 "operator": "="
-            }
-            console.log("Getting all loads")
-            // Find all loads that are assigned to this boat
-            model.listEntities(loads, filter, null, (err, entities, hasNext) => {
+            };
+            model.listEntities(users, filter, null, (err, foundUsers) => {
                 if (err) {
                     res.status(500);
-                    res.json({"Error": "An unexpected error has occured"});
+                    res.json({"Error": "Server error has occured getting boats."});
+                } else if (foundUsers.length > 0) {
+                    // The user is authorized, confirm boat exists
+                    model.getEntity(boats, req.params.id, (err, entity) => {
+                        // Check for errors
+                        if (err) {
+                            res.status(404);
+                            res.json({"Error": "No boat with this boat_id exists"});
+                        } else {
+                            // Check that the logged in user is the owner of the boat
+                            if (req.user == entity.owner) {
+                                res.status(200);
+                                // set up filter
+                                filter2 = {
+                                    "filterCol": "carrier",
+                                    "filterVar": req.params.id,
+                                    "operator": "="
+                                }
+                                // Find all loads that are assigned to this boat
+                                model.listEntities(loads, filter2, null, (err, entities, hasNext) => {
+                                    if (err) {
+                                        res.status(500);
+                                        res.json({"Error": "An unexpected error has occured"});
+                                    } else {
+                                    addLoad(req, entity, entities);
+                                    // Update the self link of the boat
+                                    entity["self"] = getSelf(req, entity["id"], "/boats/");
+                                    res.json(entity);
+                                    }
+                                });
+                            } else {
+                                forbidden(res);
+                            }
+                        }
+                    });                
                 } else {
-                addLoad(req, entity, entities);
-                // Update the self link of the boat
-                entity["self"] = getSelf(req, entity["id"], "/boats/");
-                res.json(entity);
+                    notAuthorized(res);
                 }
             });
+        } else {
+            notAuthorized(res);
         }
-    });
+    } else {
+        notAcceptable(res);
+    }
 });
 
 // POST new boat
 // Create a new boat
-app.post('/boats', (req, res) => {
-    const newBoat = req.body;
-    // Confirm request for boat has all required parameters
-    if (isBadBoat(newBoat)) {
-        badRequestBoat(res);
+app.post('/boats', verifyJwt, (req, res) => {
+    // Confirm a json has been provided
+    if (notJsonReq(req)) {
+        unsupportedMedia(res);
+    }
+    // Confirm a json response is acceptable
+    else if (req.header("Accept") == "application/json" || req.header("Accept") == "*/*") {
+        // Confirm a valid user token was supplied and the user is registered
+        if (req.user) {
+            // Set up filter to get only authenticated user
+            const filter = {
+                "filterCol": "user_id",
+                "filterVar": req.user,
+                "operator": "="
+            };
+            model.listEntities(users, filter, null, (err, foundUsers) => {
+                if (err) {
+                    res.status(500);
+                    res.json({"Error": "Server error has occured posting boat."});
+                } else if (foundUsers.length > 0) {
+                    const newBoat = req.body;
+                    // Confirm request for boat has all required parameters
+                    if (isBadBoat(newBoat)) {
+                        badRequestBoat(res);
+                    } else {
+                        // Add owner to boat
+                        newBoat.owner = req.user;
+                        // Attempt to create the boat if all parameters were present and a loads item
+                        model.createEntity(newBoat, boats, (err, newEntity) => {
+                            if (err) {
+                                res.status(500);
+                                let error = {"Error": "A server error occurred"}
+                                res.json(error);
+                            } else {
+                                res.status(201);
+                                // Add empty loads
+                                newEntity["loads"] = [];
+                                // add self link to new entity
+                                newEntity["self"] = getSelf(req, newEntity["id"], "/boats/");
+                                res.json(newEntity);
+                            }
+                        });
+                    }
+                } else {
+                    notAuthorized(res);
+                }
+            });
+        } else {
+            notAuthorized(res);
+        }
+  
     } else {
-    // Attempt to create the boat if all parameters were present and a loads item
-        model.createEntity(newBoat, boats, (err, newEntity) => {
-            if (err) {
-                res.status(500);
-                let error = {"Error": "A server error occurred"}
-                res.json(error);
-            } else {
-                res.status(201);
-                // Add empty loads
-                newEntity["loads"] = [];
-                // add self link to new entity
-                newEntity["self"] = getSelf(req, newEntity["id"], "/boats/");
-                res.json(newEntity);
-            }
-        });
+        notAcceptable(res);
     }
 });
 
@@ -466,9 +559,6 @@ app.get('/loads', (req, res) => {
    //////// Add pagination
    var pages = {"limit": 3};
    pages["token"] = req.query["token"];
-
-   console.log("Getting Load");
-
     model.listEntities(loads, null, pages, (err, entities, hasNext) => {
         if (err) {
             res.status(500);
@@ -476,12 +566,10 @@ app.get('/loads', (req, res) => {
             return;
         }
         // Set up results variables
-        console.log("Setting up load results");
         var results = {"loads": []};
 
         // Update entities with carrier info
         addAllCarriers(req, res, entities, () => {
-            console.log("Added carriers");
             if (hasNext) {
                 results["next"] = getPage(req, hasNext, "/loads");
             }
@@ -692,7 +780,23 @@ app.delete('/loads/:load_id/:boat_id', (req, res) => {
 function isBadBoat(newBoat) {
     if (newBoat.name == null || newBoat.type == null || newBoat.length == null) {
         return true;
+    } else if (Object.keys(newBoat).length != 3) {
+        return true;
     } else {
+
+        // Make sure boat attributes are valid
+        if (!checkValidAttribute(newBoat.name)) {
+            return true;
+        }
+
+        if (!checkValidAttribute(newBoat.type)) {
+            return true;
+        }
+
+        if (!checkValidNumber(newBoat.length)) {
+            return true;
+        }
+
         return false;
     }
 }
@@ -709,7 +813,7 @@ function isBadLoad(newLoad) {
 // Set and return an error when an object is missing properties
 function badRequestBoat(res) {
     res.status(400);
-    let error = {"Error": "The request object is missing at least one of the required attributes"}
+    let error = {"Error": "The request object is missing at least one of the required attributes, contains extra attributes, or has invalid attributes"};
     res.json(error);
 }
 
@@ -720,11 +824,33 @@ function badRequestLoad(res) {
     res.json(error);
 }
 
-// Start server and listen on specified port or 8080
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}...`);
-});
+// Confirm boat attribute meets requirements
+// Regex matching adapted from https://stackoverflow.com/questions/16299036/to-check-if-a-string-is-alphanumeric-in-javascript
+// Retrieved May 2, 2022
+function checkValidAttribute(attribute) {
+    // Confirm the attribute was a string
+    if (typeof attribute !== "string") {
+        return false;
+    }
+
+    // set up regular expression
+    let regex = /^[0-9a-zA-Z -]*$/;
+
+    if (attribute.match(regex) !== null && attribute.length < 40) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+// Confirm that the attribute is a number less than 1000
+function checkValidNumber(attribute) {
+    if (Number.isInteger(attribute) && attribute < 1000 && attribute > 0) {
+        return true;
+    } else {
+        return false;
+    }
+}
 
 // Generate a self link
 function getSelf(req, id, route) {
@@ -841,6 +967,34 @@ function notAcceptable(res) {
     res.json({"Error": "The requested MIME type in the Accept header is not supported"});
 }
 
+// Send a 401 not authorized response
+function notAuthorized(res) {
+    res.status(401);
+    res.json({"Error": "Must provide valid bearer token"});
+}
+
+// Send a 403 forbidden response
+function forbidden(res) {
+    res.status(403);
+    res.json({"Error": "Must be registered user"});   
+}
+
+// Return when media type is unsupported
+function unsupportedMedia(res) {
+    res.status(415);
+    let error = {"Error": "Unsupported media type in request body"};
+    res.json(error);
+}
+
+// Check Accepted header is json
+function notJsonReq(req) {
+    if (req.header("Content-Type") != "application/json") {
+        return true;
+    } else {
+        return false;
+    }
+}
+
 // Send request to google to authenticate user - either for sign up or login
 function getAuth(req, res, isLogin) {
     //Save state
@@ -864,8 +1018,6 @@ function getAuth(req, res, isLogin) {
             scope: scopes,
             state: state.state
         });
-        console.log("Logging URL");
-        console.log(oauth2clt);
 
         res.writeHead(301, {"Location": authorizationUrl});
         res.send();
@@ -889,11 +1041,18 @@ function getAuth(req, res, isLogin) {
             scope: scopes,
             state: state.state
         });
-        console.log("Logging URL");
-        console.log(oauth2clt);
 
         res.writeHead(301, {"Location": authorizationUrl});
         res.send();
     }
 
 }
+
+////////////////////////////////////
+// Start server
+////////////////////////////////////
+// Start server and listen on specified port or 8080
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}...`);
+});
