@@ -58,11 +58,8 @@ module.exports.listEntities = function (kind, filter, limits, callback) {
             console.log(err);
             return;
         }
-        console.log(hasNext);
         // Send the found entities back to the calling function
         const hasMore = hasNext.moreResults !== Datastore.NO_MORE_RESULTS ? hasNext.endCursor : false;
-        console.log(hasNext.moreResults);
-        console.log(hasMore);
         callback(null, entities.map(fromDatastore), hasMore);
     })
 }
@@ -90,40 +87,6 @@ module.exports.getEntity = function (kind, id, callback) {
 module.exports.deleteEntity = function (kind, id, callback) {
   // Set up the key and call delete
   const key = ds.key([kind, parseInt(id, 10)])
-
-  // If we are deleting a boat, need to ensure it is removed from all slips
-  // if (kind == boats) {
-  //   // Search for slip where boat is currently at
-  //   let findSlipQuery = ds.createQuery(slips)
-  //     .filter("current_boat", "=", id);
-  //       // Run the query
-  //       ds.runQuery(findSlipQuery, (err, entities) => {
-  //         if (err) {
-  //             console.log("Slip Error: ")
-  //             console.log(err);
-  //             return;
-  //         }
-  //         // If we have a slip with this boat in it, we need to remove it from the slip
-  //         console.log(entities.length);
-  //         if (entities.length > 0) {
-  //           // Get the slip with the boat in it
-  //           let curSlip = entities[0];
-  //           var curSlipData = fromDatastore(curSlip);
-  //           // Store the ID for the function call and remove from the data
-  //           var id = curSlipData["id"];
-  //           delete curSlipData["id"];
-  //           // Clear out the boat, since it is being deleted
-  //           curSlipData["current_boat"] = null
-  //           update(id, curSlipData, slips, (err, entity) => {
-  //             if (err) {
-  //               console.log(err);
-  //             } else {
-  //               console.log(entity);
-  //             }
-  //           });
-  //         }
-  //     });
-  // }
 
   // First confirm the key is valid
   read(kind, id, (err, entity) => {

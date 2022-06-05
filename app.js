@@ -341,7 +341,7 @@ app.get('/boats/:id', verifyJwt, (req, res) => {
                             if (req.user == entity.owner) {
                                 res.status(200);
                                 // set up filter
-                                filter2 = {
+                                const filter2 = {
                                     "filterCol": "carrier",
                                     "filterVar": req.params.id,
                                     "operator": "="
@@ -434,31 +434,196 @@ app.post('/boats', verifyJwt, (req, res) => {
 });
 
 // DELETE existing boat
-app.delete('/boats/:id', (req, res) => {
-    model.deleteEntity(boats, req.params.id, (err) => {
-        if (err) {
-            res.status(404);
-            res.json({"Error": "No boat with this boat_id exists"});
-        } else {
-            // set up filter
-            filter = {
-                        "filterCol": "carrier",
-                        "filterVar": req.params.id,
-                        "operator": "="
+app.delete('/boats/:id', verifyJwt, (req, res) => {
+    if (req.user) {
+        // Set up filter to get only authenticated user
+        const filter = {
+            "filterCol": "user_id",
+            "filterVar": req.user,
+            "operator": "="
+        };
+        model.listEntities(users, filter, null, (err, foundUsers) => {
+            if (err) {
+                res.status(500);
+                res.json({"Error": "Server error has occured getting boats."});
+            } else if (foundUsers.length > 0) {
+                // The user is authorized, confirm boat exists
+                model.getEntity(boats, req.params.id, (err, entity) => {
+                    // Check for errors
+                    if (err) {
+                        res.status(404);
+                        res.json({"Error": "No boat with this boat_id exists"});
+                    } else {
+                        // Check that the logged in user is the owner of the boat
+                        if (req.user == entity.owner) {
+                            model.deleteEntity(boats, req.params.id, (err) => {
+                                if (err) {
+                                    res.status(404);
+                                    res.json({"Error": "No boat with this boat_id exists"});
+                                } else {
+                                    // set up filter
+                                    const filter2 = {
+                                                "filterCol": "carrier",
+                                                "filterVar": req.params.id,
+                                                "operator": "="
+                                            };
+                                    // Find all loads that are assigned to this boat
+                                    model.listEntities(loads, filter2, null, (err, entities, hasNext) => {
+                                        if (err) {
+                                            res.status(500);
+                                            res.json({"Error": "An unexpected error has occured"});
+                                        } else {
+                                        removeLoad(entities);
+                                        }
+                                    });            
+                                    res.status(204);
+                                    res.send();
+                                }
+                            }); 
+                        } else {
+                            forbidden(res);
+                        }
                     }
-            // Find all loads that are assigned to this boat
-            model.listEntities(loads, filter, null, (err, entities, hasNext) => {
+                });                
+            } else {
+                notAuthorized(res);
+            }
+        });
+    } else {
+        notAuthorized(res);
+    }
+});
+
+
+// PUT existing boat
+// Update a new boat with all new attributes
+app.put('/boats/:id', verifyJwt, (req, res) => {
+    const newBoat = req.body;
+    // Make sure a json was sent in the request body.
+    if (notJsonReq(req)) {
+        unsupportedMedia(res);
+    // Confirm request for boat has all required parameters
+    } else if (isBadBoat(newBoat)) {
+        badRequestBoat(res);
+    } else if (req.header("Accept") == "application/json" || req.header("Accept") == "*/*") {
+        if (req.user) {
+            // Confirm that the boat ID exists
+            model.getEntity(boats, req.params.id, (err, entity) => {
+                // Check for errors
                 if (err) {
-                    res.status(500);
-                    res.json({"Error": "An unexpected error has occured"});
+                    res.status(404);
+                    res.json({"Error": "No boat with this boat_id exists"});
+                // Process the request if the owner is correct
+                } else if (entity.owner == req.user) {
+                    // Update with new owner
+                    newBoat["owner"] = req.user;
+                    model.updateEntity(req.params.id, newBoat, boats, (err, newEntity) => {
+                        if (err) {
+                            res.status(500);
+                            let error = {"Error": "A server error occurred"}
+                            res.json(error);
+                        } else {
+                            // set up filter
+                            const filter2 = {
+                                "filterCol": "carrier",
+                                "filterVar": req.params.id,
+                                "operator": "="
+                            }
+                            // Find all loads that are assigned to this boat
+                            model.listEntities(loads, filter2, null, (err, entities, hasNext) => {
+                                if (err) {
+                                    res.status(500);
+                                    res.json({"Error": "An unexpected error has occured"});
+                                } else {
+                                addLoad(req, newEntity, entities);
+                                // Update the self link of the boat
+                                newEntity["self"] = getSelf(req, newEntity["id"], "/boats/");
+                                res.json(newEntity);
+                                }
+                            });
+                        }
+                    });
                 } else {
-                removeLoad(entities);
+                    forbidden(res);
                 }
-            });            
-            res.status(204);
-            res.send();
+            });
+        } else {
+            notAuthorized(res);
         }
-    });
+    } else {
+        notAcceptable(res);
+    } 
+});
+
+// PATCH existing boat
+// Update a new boat with a number of new attributes
+app.patch('/boats/:id', verifyJwt, (req, res) => {
+    const newBoat = req.body;
+    // Make sure a json was sent in the request body.
+    if (notJsonReq(req)) {
+        unsupportedMedia(res);
+    } else if (checkPatchBoat(newBoat)) {
+        badRequestBoat(res);
+    } else if (req.header("Accept") == "application/json" || req.header("Accept") == "*/*") {
+        if (req.user) {
+            // Confirm that the boat ID exists
+            model.getEntity(boats, req.params.id, (err, entity) => {
+                // Check for errors
+                if (err) {
+                    res.status(404);
+                    res.json({"Error": "No boat with this boat_id exists"});
+                // Process the request if the owner is correct
+                } else if (entity.owner == req.user) {
+                    // Update with new owner
+                    newBoat["owner"] = req.user;
+
+                    // Update any new attributes
+                    if (newBoat.name !== undefined) {
+                        entity["name"] = newBoat.name;
+                    }
+                    if (newBoat.length !== undefined) {
+                        entity["length"] = newBoat.length;
+                    }
+                    if (newBoat.type !== undefined) {
+                        entity["type"] = newBoat.type;
+                    }   
+
+                    model.updateEntity(req.params.id, entity, boats, (err, newEntity) => {
+                        if (err) {
+                            res.status(500);
+                            let error = {"Error": "A server error occurred"}
+                            res.json(error);
+                        } else {
+                            // set up filter
+                            const filter2 = {
+                                "filterCol": "carrier",
+                                "filterVar": req.params.id,
+                                "operator": "="
+                            }
+                            // Find all loads that are assigned to this boat
+                            model.listEntities(loads, filter2, null, (err, entities, hasNext) => {
+                                if (err) {
+                                    res.status(500);
+                                    res.json({"Error": "An unexpected error has occured"});
+                                } else {
+                                addLoad(req, newEntity, entities);
+                                // Update the self link of the boat
+                                newEntity["self"] = getSelf(req, newEntity["id"], "/boats/");
+                                res.json(newEntity);
+                                }
+                            });
+                        }
+                    });
+                } else {
+                    forbidden(res);
+                }
+            });
+        } else {
+            notAuthorized(res);
+        }
+    } else {
+        notAcceptable(res);
+    } 
 });
 
 // Put a load onto a boat
@@ -556,86 +721,235 @@ app.delete('/boats/:boat_id/loads/:load_id', (req, res) => {
 // GET all loads
 // Display a list of all loads
 app.get('/loads', (req, res) => {
-   //////// Add pagination
-   var pages = {"limit": 3};
-   pages["token"] = req.query["token"];
-    model.listEntities(loads, null, pages, (err, entities, hasNext) => {
-        if (err) {
-            res.status(500);
-            res.json({"Error": "Server error getting loads"});
-            return;
-        }
-        // Set up results variables
-        var results = {"loads": []};
-
-        // Update entities with carrier info
-        addAllCarriers(req, res, entities, () => {
-            if (hasNext) {
-                results["next"] = getPage(req, hasNext, "/loads");
+    if (req.header("Accept") == "application/json" || req.header("Accept") == "*/*") {
+        //////// Add pagination
+        var pages = {"limit": 5};
+        pages["token"] = req.query["token"];
+        model.listEntities(loads, null, pages, (err, entities, hasNext) => {
+            if (err) {
+                res.status(500);
+                res.json({"Error": "Server error getting loads"});
+                return;
             }
-            results["loads"] = entities;
-            res.status(200);
-            res.json(results);
+            // Set up results variables
+            model.listEntities(loads, null, null, (err, allEntities, unusedHasNext) => {
+                if (err) {
+                    res.status(500);
+                    res.json({"Error": "Server error getting loads"});
+                } else {
+                    var results = {"loads": []};
+                    results["total"] = allEntities.length;
+            
+                    // Update entities with carrier info
+                    addAllCarriers(req, res, entities, () => {
+                        if (hasNext) {
+                            results["next"] = getPage(req, hasNext, "/loads");
+                        }
+                        results["loads"] = entities;
+                        res.status(200);
+                        res.json(results);
+                    });
+                }
+            });
         });
-    });
+    } else {
+        notAcceptable(res);
+    }
 });
 
 // GET specific load
 // Get information about a specific load
 app.get('/loads/:id', (req, res) => {
-    model.getEntity(loads, req.params.id, (err, entity) => {
-        // Check for errors
-        if (err) {
-            res.status(404);
-            res.json({"Error": "No load with this load_id exists"});
-        } else {
-            // If the load is assigned to a boat, we need to get the name
-            if (entity["carrier"] !== null) {
-                model.getEntity(boats, entity["carrier"], (err, boat) => {
-                    if (err) {
-                        res.status(500);
-                        res.json({"Error": "Server error getting loads"});                        
-                    } else {
-                        updateCarrier(req, entity, boat["name"]);
-                        res.status(200);
-                        entity["self"] = getSelf(req, entity["id"], "/loads/");
-                        res.json(entity);
-                    }
-                });
+    if (req.header("Accept") == "application/json" || req.header("Accept") == "*/*") {
+        model.getEntity(loads, req.params.id, (err, entity) => {
+            // Check for errors
+            if (err) {
+                res.status(404);
+                res.json({"Error": "No load with this load_id exists"});
             } else {
-                // Set up load information if required
-                updateCarrier(req, entity, null);
-                res.status(200);
-                entity["self"] = getSelf(req, entity["id"], "/loads/");
-                res.json(entity);
+                // If the load is assigned to a boat, we need to get the name
+                if (entity["carrier"] !== null) {
+                    model.getEntity(boats, entity["carrier"], (err, boat) => {
+                        if (err) {
+                            res.status(500);
+                            res.json({"Error": "Server error getting loads"});                        
+                        } else {
+                            updateCarrier(req, entity, boat["name"]);
+                            res.status(200);
+                            entity["self"] = getSelf(req, entity["id"], "/loads/");
+                            res.json(entity);
+                        }
+                    });
+                } else {
+                    // Set up load information if required
+                    updateCarrier(req, entity, null);
+                    res.status(200);
+                    entity["self"] = getSelf(req, entity["id"], "/loads/");
+                    res.json(entity);
+                }
             }
-        }
-    });
+        });    
+    } else {
+        notAcceptable(res);
+    }
+    
 });
 
 // POST new load
 // Create a new load
 app.post('/loads', (req, res) => {
-    const newLoad = req.body;
-    // Confirm request for boat has all required parameters
-    if (isBadLoad(newLoad)) {
-        badRequestLoad(res);
+   // Confirm a json has been provided
+    if (notJsonReq(req)) {
+        unsupportedMedia(res);
+    }
+    // Confirm a json response is acceptable
+    else if (req.header("Accept") == "application/json" || req.header("Accept") == "*/*") {
+        const newLoad = req.body;
+        // Confirm request for boat has all required parameters
+        if (isBadLoad(newLoad)) {
+            badRequestLoad(res);
+        } else {
+        // Attempt to create the load if all parameters were present
+            // Set the current boat to null
+            newLoad["carrier"] = null;
+            model.createEntity(newLoad, loads, (err, newEntity) => {
+                if (err) {
+                    res.status(500);
+                    let error = {"Error": "A server error occurred"}
+                    res.json(error);
+                } else {
+                    res.status(201);
+                    newEntity["self"] = getSelf(req, newEntity["id"], "/loads/");
+                    res.json(newEntity);
+                }
+            });
+        }    
     } else {
-    // Attempt to create the boat if all parameters were present
-        // Set the current boat to null
-        newLoad["carrier"] = null;
-        model.createEntity(newLoad, loads, (err, newEntity) => {
+        notAcceptable(res);
+    }
+
+});
+
+// PUT existing load
+// Update a new boat with all new attributes
+app.put('/loads/:id', (req, res) => {
+    const newLoad = req.body;
+    // Make sure a json was sent in the request body.
+    if (notJsonReq(req)) {
+        unsupportedMedia(res);
+    // Confirm request for boat has all required parameters
+    } else if (isBadLoad(newLoad)) {
+        badRequestLoad(res);
+    } else if (req.header("Accept") == "application/json" || req.header("Accept") == "*/*") {
+        // Confirm that the load ID exists
+        model.getEntity(loads, req.params.id, (err, entity) => {
+            // Check for errors
             if (err) {
-                res.status(500);
-                let error = {"Error": "A server error occurred"}
-                res.json(error);
+                res.status(404);
+                res.json({"Error": "No load with this load_id exists"});
+            // Process the request if the owner is correct
             } else {
-                res.status(201);
-                newEntity["self"] = getSelf(req, newEntity["id"], "/loads/");
-                res.json(newEntity);
+                // Update load with current carrier
+                newLoad["carrier"] = entity.carrier;
+                model.updateEntity(req.params.id, newLoad, loads, (err, newEntity) => {
+                    if (err) {
+                        res.status(500);
+                        let error = {"Error": "A server error occurred"}
+                        res.json(error);
+                    } else {
+                        // If the load is assigned to a boat, we need to get the name
+                        if (newEntity["carrier"] !== null) {
+                            model.getEntity(boats, newEntity["carrier"], (err, boat) => {
+                                if (err) {
+                                    res.status(500);
+                                    res.json({"Error": "Server error getting loads"});                        
+                                } else {
+                                    updateCarrier(req, newEntity, boat["name"]);
+                                    res.status(200);
+                                    newEntity["self"] = getSelf(req, newEntity["id"], "/loads/");
+                                    res.json(newEntity);
+                                }
+                            });
+                        } else {
+                            // Set up load information if required
+                            updateCarrier(req, newEntity, null);
+                            res.status(200);
+                            newEntity["self"] = getSelf(req, newEntity["id"], "/loads/");
+                            res.json(newEntity);
+                        }
+                    }
+                });
             }
         });
-    }
+    } else {
+        notAcceptable(res);
+    } 
+});
+
+// PATCH existing load
+// Update a new boat with a subset of new attributes
+app.patch('/loads/:id', (req, res) => {
+    const newLoad = req.body;
+    // Make sure a json was sent in the request body.
+    if (notJsonReq(req)) {
+        unsupportedMedia(res);
+    // Confirm request for boat has all required parameters
+    } else if (checkPatchLoad(newLoad)) {
+        badRequestLoad(res);
+    } else if (req.header("Accept") == "application/json" || req.header("Accept") == "*/*") {
+        // Confirm that the load ID exists
+        model.getEntity(loads, req.params.id, (err, entity) => {
+            // Check for errors
+            if (err) {
+                res.status(404);
+                res.json({"Error": "No load with this load_id exists"});
+            // Process the request if the owner is correct
+            } else {
+                // Update any missing attributes in load
+                if (newLoad.volume !== undefined) {
+                    entity["volume"] = newLoad.volume;
+                }
+                if (newLoad.item !== undefined) {
+                    entity["item"] = newLoad.item;
+                }
+                if (newLoad.creation_date !== undefined) {
+                    entity["creation_date"] = newLoad.creation_date;
+                }                   
+                // Update load with current carrier
+                newLoad["carrier"] = entity.carrier;
+                model.updateEntity(req.params.id, newLoad, loads, (err, newEntity) => {
+                    if (err) {
+                        res.status(500);
+                        let error = {"Error": "A server error occurred"}
+                        res.json(error);
+                    } else {
+                        // If the load is assigned to a boat, we need to get the name
+                        if (newEntity["carrier"] !== null) {
+                            model.getEntity(boats, newEntity["carrier"], (err, boat) => {
+                                if (err) {
+                                    res.status(500);
+                                    res.json({"Error": "Server error getting loads"});                        
+                                } else {
+                                    updateCarrier(req, newEntity, boat["name"]);
+                                    res.status(200);
+                                    newEntity["self"] = getSelf(req, newEntity["id"], "/loads/");
+                                    res.json(newEntity);
+                                }
+                            });
+                        } else {
+                            // Set up load information if required
+                            updateCarrier(req, newEntity, null);
+                            res.status(200);
+                            newEntity["self"] = getSelf(req, newEntity["id"], "/loads/");
+                            res.json(newEntity);
+                        }
+                    }
+                });
+            }
+        });
+    } else {
+        notAcceptable(res);
+    } 
 });
 
 // DELETE existing load
@@ -651,126 +965,14 @@ app.delete('/loads/:id', (req, res) => {
     });
 });
 
-// Get all loads on a given boat
-app.get("/boats/:boat_id/loads", (req, res) => {
-    // First confirm the boat exists
-    model.getEntity(boats, req.params.boat_id, (err, boat) => {
-        if (err) {
-            res.status(404);
-            res.json({"Error": "No boat with this boat_id exists"});
-        } else {
-            // Find all loads that are assigned to this boat
-            filter = {
-                "filterCol": "carrier",
-                "filterVar": req.params.boat_id,
-                "operator": "="
-            }
-            model.listEntities(loads, filter, null, (err, entities, hasNext) => {
-                if (err) {
-                    res.status(500);
-                    res.json({"Error": "An unexpected error has occured"});
-                } else {
-                    // Setup results array to return 
-                    results = {"loads": []};
-                    for (let index = 0; index < entities.length; index++) {
-                        curLoad = entities[index];
-                        updateCarrier(req, curLoad, boat["name"]);
-                        curLoad["self"] = getSelf(req, curLoad.id, "/loads/");
-                        results["loads"].push(curLoad);
-                    }
-                    res.status(200);
-                    res.json(results);
-                }
-            });
-        }
-    });
+/////////////////////////////////////////////////////////////////////////
+// Handle all remaining routes
+/////////////////////////////////////////////////////////////////////////
+app.all("*", (req, res) => {
+    res.status(405);
+    res.json({"Error": "Method not allowed"});
 });
 
-// PUT a boat into a load
-app.put('/loads/:load_id/:boat_id', (req, res) => {
-    model.getEntity(loads, req.params.load_id, (err, load) => {
-        if (err) {
-            res.status(404);
-            res.json({"Error": "The specified boat and/or load does not exist"});
-            return;
-        } else {
-            // The load exists, so find the boat
-            model.getEntity(boats, req.params.boat_id, (err, boat) => {
-                if (err) {
-                    res.status(404);
-                    res.json({"Error": "The specified boat and/or load does not exist"});
-                    return;                   
-                } else {
-                    // Confirm there is room at the load
-                    if (load["current_boat"] !== null) {
-                        res.status(403);
-                        res.json({"Error": "The load is not empty"});
-                        return;
-                    }                    
-                    // The boat exists and the load is empty, so update its position in the load
-                    load["current_boat"] = boat["id"]
-                    let id = load["id"];
-                    // Remove ID from load for updating only data
-                    delete load["id"];
-                    model.updateEntity(id, load, loads, (err, newEntity) => {
-                        if (err) {
-                            res.status(500);
-                            let error = {"Error": "A server error occurred"}
-                            res.json(error);
-                        } else {
-                            res.status(204);
-                            res.send();
-                        }
-                    });
-                }
-            });
-
-        }
-    })
-});
-
-// DELETE a boat from a load
-app.delete('/loads/:load_id/:boat_id', (req, res) => {
-    model.getEntity(loads, req.params.load_id, (err, load) => {
-        if (err) {
-            res.status(404);
-            res.json({"Error": "No boat with this boat_id is at the load with this load_id"});
-            return;
-        } else {
-            // Confirm the boat is in the load
-            if (load["current_boat"] != req.params.boat_id) {
-                res.status(404);
-                res.json({"Error": "No boat with this boat_id is at the load with this load_id"});
-                return;
-            }
-            // The load exists and is empty, so find the boat
-            model.getEntity(boats, req.params.boat_id, (err, boat) => {
-                if (err) {
-                    res.status(404);
-                    res.json({"Error": "No boat with this boat_id is at the load with this load_id"});
-                    return;                   
-                } else {
-                    // The boat exists, so update its position in to be removed from the load
-                    load["current_boat"] = null;
-                    let id = load["id"];
-                    // Remove ID from load for updating only data
-                    delete load["id"];
-                    model.updateEntity(id, load, loads, (err, newEntity) => {
-                        if (err) {
-                            res.status(500);
-                            let error = {"Error": "A server error occurred"}
-                            res.json(error);
-                        } else {
-                            res.status(204);
-                            res.send();
-                        }
-                    });
-                }
-            });
-
-        }
-    })    
-});
 
 /////////////////////////////////////////////////////////////////////////
 // Helper functions
@@ -815,6 +1017,75 @@ function badRequestBoat(res) {
     res.status(400);
     let error = {"Error": "The request object is missing at least one of the required attributes, contains extra attributes, or has invalid attributes"};
     res.json(error);
+}
+
+// Confirm at least one valid attribute is present in a patch request and there are no other attributes
+function checkPatchBoat(newBoat) {
+    // Count how many valid attributes there are
+    var totalValid = 0
+    
+
+    if (newBoat.name !== undefined) {
+        totalValid = totalValid + 1
+        if (!checkValidAttribute(newBoat.name)) {
+
+            return true;
+        }        
+    }
+    if (newBoat.length !== undefined) {
+        totalValid = totalValid + 1
+        if (!checkValidNumber(newBoat.length)) {
+            return true;
+        }
+    }
+    if (newBoat.type !== undefined) {
+        totalValid = totalValid + 1
+        if (!checkValidAttribute(newBoat.type)) {
+            return true;
+        }        
+    }
+
+
+    if (totalValid == 0 || Object.keys(newBoat).length != totalValid) {
+        return true;
+    }
+
+    return false;
+
+}
+
+// Confirm at least one valid attribute is present in a patch request and there are no other attributes
+function checkPatchLoad(newLoad) {
+    // Count how many valid attributes there are
+    var totalValid = 0
+    
+
+    if (newLoad.volume !== undefined) {
+        totalValid = totalValid + 1
+        if (!checkValidNumber(newLoad.volume)) {
+            console.log("Invalid volume");
+            return true;
+        }        
+    }
+    if (newLoad.item !== undefined) {
+        totalValid = totalValid + 1
+        if (!checkValidAttribute(newLoad.item)) {
+            console.log("Invalid item");
+            return true;
+        }
+    }
+    if (newLoad.creation_date !== undefined) {
+        totalValid = totalValid + 1
+    }
+
+
+    if (totalValid == 0 || Object.keys(newLoad).length != totalValid) {
+        console.log("Invalid number match");
+        return true;
+    }
+
+    return false;
+
 }
 
 // Set and return an error when an object is missing properties
@@ -970,13 +1241,13 @@ function notAcceptable(res) {
 // Send a 401 not authorized response
 function notAuthorized(res) {
     res.status(401);
-    res.json({"Error": "Must provide valid bearer token"});
+    res.json({"Error": "Must provide valid bearer token and be registered"});
 }
 
 // Send a 403 forbidden response
 function forbidden(res) {
     res.status(403);
-    res.json({"Error": "Must be registered user"});   
+    res.json({"Error": "Must be owner of boat"});   
 }
 
 // Return when media type is unsupported
